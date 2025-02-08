@@ -1,0 +1,1 @@
+This folder is used to hold feature centers and distance matrices.

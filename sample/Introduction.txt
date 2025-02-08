@@ -1,0 +1,1 @@
+The sampling results are saved in this folder.
