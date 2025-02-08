@@ -5,7 +5,7 @@ L-Diffusion: Laplace Diffusion for Efficient Pathology Image Segmentation
 
 ### ✨ Demo of Segmentation Results
 
-![demo]()
+![demo](https://raw.githubusercontent.com/Lweihan/LDiffusion/refs/heads/main/attachment/show.gif)
 
 ### 🛠️ Easy Environment Setup
 
