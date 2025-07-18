@@ -198,4 +198,4 @@ if __name__ == "__main__":
     args = parse_args()
     print("\033[35m" + str(vars(args)) + "\033[0m")
     trainer = LDiffusionModel(args.diffusion_path, level="cell")
-    trainer.train(args, component="all", ldiffusion_weight='/home/disk3/lwh/image_process/evaluation/LDiffusion/train_save/unet/25_07_17')
+    trainer.train(args, component="all", ldiffusion_weight='your ldiffusion weight path here')

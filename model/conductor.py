@@ -113,14 +113,11 @@ class ASPP(nn.Module):
         x = torch.cat(aspp_outs, dim=1)
         return self.project(x)
 
-# TissueSegNet定义
 class TissueSegNet(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
-        # 加载官方预训练ConvNeXt Tiny，weights可以选择 pretrained 或 None
         weights = ConvNeXt_Tiny_Weights.IMAGENET1K_V1
         backbone = convnext_tiny(weights=weights)
-        # 去掉分类头，只保留feature extractor
         self.backbone = nn.Sequential(*list(backbone.children())[:-2])  # 输出通道默认384
 
         self.cbam = CBAM(768)          # ConvNeXt Tiny最后stage输出channels=384
@@ -133,21 +130,19 @@ class TissueSegNet(nn.Module):
         )
 
     def forward(self, x):
-        feat = self.backbone(x)        # (B, 384, H/32, W/32)
-        feat = self.cbam(feat)         # 加入注意力
-        feat = self.aspp(feat)         # ASPP多尺度特征
-        out = self.decoder(feat)       # 输出类别数通道
-        out = F.interpolate(out, size=x.shape[2:], mode='bilinear', align_corners=False)  # 恢复到输入尺寸
+        feat = self.backbone(x)
+        feat = self.cbam(feat)
+        feat = self.aspp(feat)
+        out = self.decoder(feat)
+        out = F.interpolate(out, size=x.shape[2:], mode='bilinear', align_corners=False)
         return {"out": out}
 
 class CellSegClassifier(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
         self.num_classes = num_classes
-        # 延迟加载 Cellpose 模型，避免导入时执行
         self.cellpose_model = None
 
-        # 分类模型
         backbone = tv_models.resnet152(weights=tv_models.ResNet152_Weights.DEFAULT)
         self.encoder = nn.Sequential(*list(backbone.children())[:-2])  # [B, 2048, H/32, W/32]
         self.adapter = nn.Conv2d(2048, 256, kernel_size=3, padding=1)
@@ -204,29 +199,28 @@ class CellSegClassifier(nn.Module):
             if y2 - y1 < 4 or x2 - x1 < 4:
                 continue
 
-            patch = image_np[y1:y2 + 1, x1:x2 + 1]  # 裁剪原图
-            patch_pil = Image.fromarray((patch * 255).astype(np.uint8))  # 转为 PIL 图像
-            patch_tensor = self.preprocess(patch_pil)  # 预处理：ToTensor → Resize → Normalize
+            patch = image_np[y1:y2 + 1, x1:x2 + 1]
+            patch_pil = Image.fromarray((patch * 255).astype(np.uint8))
+            patch_tensor = self.preprocess(patch_pil)
             patches.append(patch_tensor)
             valid_instance_ids.append(inst_id)
             boxes.append((x1, y1, x2, y2))
 
         if not patches:
-            print("未检测到有效细胞")
             return {"out": torch.zeros((1, self.num_classes, *image_np.shape[:2]), device=device, requires_grad=True)}
 
         batch = torch.stack(patches).to(device)  # [N, 3, H, W]
 
         # 特征提取并分类
-        with torch.no_grad():  # 避免保存 encoder 的中间梯度
+        with torch.no_grad():
             feats = self.encoder(batch)  # [N, 2048, h, w]
             feats = self.adapter(feats)  # [N, 256, h, w]
             feats = F.adaptive_avg_pool2d(feats, (1, 1)).flatten(1)  # [N, 256]
 
         logits = self.classifier(feats)  # [N, num_classes]
-        probs = F.softmax(logits, dim=1)[:, 1:]  # 只考虑类 1 ~ num_classes-1
+        probs = F.softmax(logits, dim=1)[:, 1:]
         _, pred_labels = torch.topk(probs, k=1, dim=1)
-        pred_labels = pred_labels + 1  # shift 回 [1, num_classes-1]
+        pred_labels = pred_labels + 1  # [1, num_classes-1]
 
         # 构造输出 mask
         final_mask = torch.zeros((1, self.num_classes, *image_np.shape[:2]), device=device, requires_grad=True)

@@ -46,7 +46,6 @@ def convert_labels(img_path, level):
     else:
         raise ValueError("Unsupported level. Use 'tissue' or 'cell'.")
 
-# 数据集类
 class MedicalSegmentationDataset(Dataset):
     def __init__(self, image_dir_list, label_dir_list, transform=None, level=None):
         self.image_dir = image_dir_list
@@ -58,11 +57,9 @@ class MedicalSegmentationDataset(Dataset):
         return len(self.image_dir)
 
     def __getitem__(self, idx):
-        # 图像路径和标签路径
         image_path = self.image_dir[idx]
         label_path = self.label_dir[idx]
 
-        # 加载 RGB 图像并 resize
         image = Image.open(image_path).convert("RGB")
         if self.transform:
             image = self.transform(image)
