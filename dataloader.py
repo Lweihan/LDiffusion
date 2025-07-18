@@ -1,86 +1,77 @@
 import os
 import torch
-import random
-import numpy as np
-from PIL import Image
 from torch.utils.data import Dataset
+from torchvision import transforms
+from PIL import Image
+import numpy as np
 
+pixel_to_label = {
+    0: 0,
+    100: 1,
+    150: 2,
+    50: 3,
+    200: 4,
+    250: 5,
+    255: 6
+}
+
+pixel_to_label_cell = {
+    0: 0,
+    25: 1,
+    50: 2,
+    75: 3,
+    100: 4,
+    125: 5,
+    150: 6,
+    175: 7,
+    200: 8,
+    225: 9,
+    250: 10
+}
+
+def convert_labels(img_path, level):
+    img = Image.open(img_path).convert("L")
+    img_array = np.array(img, dtype=np.uint8)
+
+    label_img = np.zeros_like(img_array, dtype=np.uint8)
+
+    if level == "tissue":
+        for orig_pixel, new_label in pixel_to_label.items():
+            label_img[img_array == orig_pixel] = new_label
+        return label_img
+    elif level == "cell":
+        for orig_pixel, new_label in pixel_to_label_cell.items():
+            label_img[img_array == orig_pixel] = new_label
+        return label_img
+    else:
+        raise ValueError("Unsupported level. Use 'tissue' or 'cell'.")
+
+# 数据集类
 class MedicalSegmentationDataset(Dataset):
-    def __init__(self, image_dir, label_dir, transform=None):
-        self.image_dir = image_dir
-        self.label_dir = label_dir
-        self.image_names = [f for f in sorted(os.listdir(image_dir)) if f.endswith('.tif')]
-        self.label_names = [f for f in sorted(os.listdir(label_dir)) if f.endswith('.png')]
+    def __init__(self, image_dir_list, label_dir_list, transform=None, level=None):
+        self.image_dir = image_dir_list
+        self.label_dir = label_dir_list
         self.transform = transform
+        self.level = level
 
     def __len__(self):
-        return len(self.image_names)
+        return len(self.image_dir)
 
     def __getitem__(self, idx):
-        img_name = os.path.join(self.image_dir, self.image_names[idx])
-        label_name = os.path.join(self.label_dir, self.label_names[idx])
-        image = Image.open(img_name).convert("RGB")  # 转换为 RGB 格式
-        label = Image.open(label_name).convert("L").resize((512, 512)) # 标签通常是单通道
-        
+        # 图像路径和标签路径
+        image_path = self.image_dir[idx]
+        label_path = self.label_dir[idx]
+
+        # 加载 RGB 图像并 resize
+        image = Image.open(image_path).convert("RGB")
         if self.transform:
             image = self.transform(image)
-
-        # 将像素值为 255 的位置转成 5
-        image_array = np.array(label)
-        image_array[image_array == 255] = 0
-        pixel_values = image_array // 50
-        image_tensor = torch.tensor(pixel_values, dtype=torch.uint8)
-        # 将数组调整为适当的形状，并增加一个维度以符合 [1, 512, 512] 形状
-        label = image_tensor.view(512, 512).unsqueeze(0)  # 在最前面添加一个维度
-        return image, label, img_name, label_name
-
-class CustomDataset(Dataset):
-    def __init__(self, image_dir, label_dir, train=True, train_ratio=0.7, transform=None):
-        self.image_dir = image_dir
-        self.label_dir = label_dir
-        self.transform = transform
-        self.image_files = sorted([f for f in os.listdir(image_dir) if f.endswith(('jpg', 'png', 'tif'))])
-        random.shuffle(self.image_files)  # 随机打乱
-        
-        train_size = int(len(self.image_files) * train_ratio)
-        
-        if train:
-            self.image_files = self.image_files[:train_size]
         else:
-            self.image_files = self.image_files[train_size:]
-    
-    def __len__(self):
-        return len(self.image_files)
-    
-    def __getitem__(self, idx):
-        img_name = self.image_files[idx]
-        img_path = os.path.join(self.image_dir, img_name)
-        label_path = os.path.join(self.label_dir, img_name.replace(".tif", ".png"))
-        
-        image = Image.open(img_path).convert("RGB")
-        label = Image.open(label_path).convert("L").resize((512, 512))
-        
-        if self.transform:
-            image = self.transform(image)
+            image = transforms.ToTensor()(image)
 
-        image_array = np.array(label)
-        image_array[image_array == 255] = 0
-        pixel_values = image_array // 50
-        # pixel_values = image_array // 25
-        image_tensor = torch.tensor(pixel_values, dtype=torch.uint8)
-        label = image_tensor.view(512, 512).unsqueeze(0)
-        return image, label
+        mask = convert_labels(label_path, self.level)
+        label = torch.tensor(np.array(mask), dtype=torch.uint8).unsqueeze(0)
+        mask = torch.tensor(np.array(mask), dtype=torch.long)
 
-class ConvNeXTDataset(Dataset):
-    def __init__(self, features, labels, target_size=(32, 32)):
-        self.features = torch.tensor(features, dtype=torch.float32)
-        self.labels = torch.tensor(labels, dtype=torch.long)
-        self.target_size = target_size
+        return image, mask, label
 
-    def __len__(self):
-        return len(self.labels)
-
-    def __getitem__(self, idx):
-        feature = self.features[idx].unsqueeze(-1).unsqueeze(-1)  
-        feature = feature.expand(-1, *self.target_size)         
-        return feature, self.labels[idx]

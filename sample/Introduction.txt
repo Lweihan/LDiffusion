@@ -1,1 +1,1 @@
-The sampling results are saved in this folder.
+# 采样结果被保存在当前文件夹下

@@ -1,1 +1,0 @@
-This folder is used to save the diffusion model for predicting noisy network weights.

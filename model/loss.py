@@ -1,95 +1,186 @@
-import os
-import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from diffusers import StableDiffusionImg2ImgPipeline
 from diffusers import LMSDiscreteScheduler
 from diffusers import UNet2DConditionModel
+from torchvision.models import vgg19, VGG19_Weights
 
-def info_nce_loss(features, labels, temperature=0.5, eps=1e-8):
-    # 获取 batch_size, 类别数和图像的宽度、高度
-    batch_size, num_vectors, height, width = features.shape
-    _, _, h, w = labels.shape
 
-    # 将 features 转换为形状 [1, 64*64, 10]
-    features = features.view(batch_size, num_vectors, -1).permute(0, 2, 1)  # [1, 64*64, 10]
+class InfoNceLoss:
+    def __init__(self, temperature=0.5, num_negatives=1024, eps=1e-8):
+        self.temperature = temperature
+        self.num_negatives = num_negatives
+        self.eps = eps
+        self.vgg = vgg19(weights=VGG19_Weights.DEFAULT).features.eval()  # Load VGG19 for content loss
+        for param in self.vgg.parameters():
+            param.requires_grad = False
 
-    # 将 labels 转换为形状 [1, 64*64]
-    labels = labels.view(batch_size, -1)  # [1, 64*64]
+    def compute_content_loss(self, original_image, generated_image):
+        """
+        Compute content loss based on VGG19 features.
 
-    # 计算保留的样本数量（30%）
-    retain_num = int(num_vectors * 0.5)
-    
-    # 随机选择 retain_num 个索引
-    # indices = torch.randperm(num_vectors)[:retain_num]
+        Args:
+            original_image (torch.Tensor): Original image tensor [B, C, H, W].
+            generated_image (torch.Tensor): Generated image tensor [B, C, H, W].
 
-    # features_selected = features[:, indices, :]
-    # labels_selected = labels[:, indices]
+        Returns:
+            torch.Tensor: Content loss.
+        """
+        device = original_image.device
+        self.vgg.to(device)
 
-    # 获取相似性矩阵
-    similarity_matrix = torch.bmm(features, features.transpose(1, 2)) / temperature  # [1, 64*64, 64*64]
+        # Ensure input images are resized to 224x224 for VGG19
+        resize_transform = torch.nn.functional.interpolate
+        original_image = resize_transform(original_image, size=(224, 224), mode='bilinear', align_corners=False)
+        generated_image = resize_transform(generated_image, size=(224, 224), mode='bilinear', align_corners=False)
 
-    # 构建标签掩码矩阵
-    mask = (labels.unsqueeze(1) == labels.unsqueeze(2)).float()  # [1, 64*64, 64*64]
+        original_features = self.vgg(original_image)
+        generated_features = self.vgg(generated_image)
 
-    # 对比损失计算
-    exp_sim = torch.exp(similarity_matrix)  # [1, 64*64, 64*64]
-    positive_sim = (mask * exp_sim).sum(dim=2)  # [1, 64*64]
-    negative_sim = ((1 - mask) * exp_sim).sum(dim=2)  # [1, 64*64]
+        content_loss = F.mse_loss(original_features, generated_features)
+        return content_loss
 
-    # 计算对比损失
-    loss = -torch.log((positive_sim + eps) / (positive_sim + negative_sim + eps)).mean()
+    def compute_contrastive_loss(self, features, labels):
+        """
+        Compute contrastive loss for segmentation tasks.
 
-    # loss = loss.to(device).to(torch.float16)
+        Args:
+            features (torch.Tensor): [1, n, 64, 64] feature map.
+            labels (torch.Tensor): [1, 1, 64, 64] label map with values 0-6.
 
-    # 检查是否有nan
-    if torch.isnan(loss):
-        print("Warning: Loss is NaN!")
-    
-    return loss
+        Returns:
+            torch.Tensor: Contrastive loss.
+        """
+        batch_size, num_vectors, height, width = features.shape
+        device = features.device
 
-def save_class_distances_to_csv(features, labels, epoch, current_date, save_path):
-    # 确保输入形状匹配
-    batch_size, num_vectors, height, width = features.shape
-    features = features.view(batch_size, num_vectors, -1).permute(0, 2, 1)  # [1, 64*64, 10]
-    labels = labels.view(batch_size, -1)  # [1, 64*64]
-    
-    full_save_path = f"{save_path}/{current_date}"
-    num_classes = labels.max().item() + 1  # 计算类别数
+        # Flatten spatial dimensions
+        features = features.view(batch_size, num_vectors, -1).permute(0, 2, 1)  # [1, 64*64, C]
+        labels = labels.view(batch_size, -1)  # [1, 64*64]
 
-    os.makedirs(full_save_path, exist_ok=True)
-    
-    # 计算每个类别的特征中心
-    class_centers = []
-    for cls in range(num_classes):
-        cls_mask = (labels == cls).float().unsqueeze(-1)  # [1, 64*64, 1]
-        cls_features = (features * cls_mask).sum(dim=1) / (cls_mask.sum(dim=1) + 1e-8)  # [1, 10]
-        class_centers.append(cls_features.squeeze(0).detach().cpu().numpy())
+        total_loss = 0.0
+        valid_count = 0
 
-        # 保存当前类别的所有特征
-        cls_indices = (labels[0] == cls).nonzero(as_tuple=True)[0]  # 获取属于当前类别的索引
-        all_features = features[0, cls_indices].detach().cpu().numpy()  # 提取所有特征
-        cls_features_df = pd.DataFrame(all_features, columns=[f"Feature_{i}" for i in range(num_vectors)])
-        cls_features_file_path = f"{save_path}/{current_date}/class_{cls}_features_epoch_{epoch}.csv"
-        cls_features_df.to_csv(cls_features_file_path, index=False)
-    
-    class_centers = np.array(class_centers)  # [num_classes, embedding_dim]
-    
-    # 计算类别中心之间的距离矩阵
-    dist_matrix = np.linalg.norm(class_centers[:, None] - class_centers[None, :], axis=-1)  # [num_classes, num_classes]
-    
-    # 保存距离矩阵到 CSV
-    dist_df = pd.DataFrame(dist_matrix, columns=[f"Class_{i}" for i in range(num_classes)],
-                           index=[f"Class_{i}" for i in range(num_classes)])
-    dist_file_path = f"{save_path}/{current_date}/distance_matrix_epoch_{epoch}.csv"
-    dist_df.to_csv(dist_file_path, index=True)
-    
-    # 保存类别中心到 CSV
-    centers_df = pd.DataFrame(class_centers, columns=[f"Feature_{i}" for i in range(class_centers.shape[1])],
-                              index=[f"Class_{i}" for i in range(num_classes)])
-    centers_file_path = f"{save_path}/{current_date}/class_centers_epoch_{epoch}.csv"
-    centers_df.to_csv(centers_file_path, index=True)
-    
-    print(f"Epoch {epoch}: Distance matrix and class centers saved to {save_path}")
+        for b in range(batch_size):
+            feat = features[b]  # [H*W, C]
+            label = labels[b]  # [H*W]
+            unique_labels = torch.unique(label)
+
+            positive_pairs = []
+
+            for lbl in unique_labels:
+                mask = (label == lbl)
+                pos_idx = torch.nonzero(mask).squeeze(-1)
+                neg_idx = torch.nonzero(~mask).squeeze(-1)
+
+                if len(pos_idx) > 1 and len(neg_idx) > self.num_negatives:
+                    sampled = torch.randperm(len(pos_idx))[:max(1, int(0.01 * len(pos_idx)))]
+                    for idx in sampled:
+                        anchor_idx = pos_idx[idx].item()
+                        positive_pool = pos_idx[pos_idx != anchor_idx]
+                        if len(positive_pool) == 0:
+                            continue
+
+                        pos_sample = positive_pool[torch.randint(0, len(positive_pool), (1,))].item()
+                        neg_sample = neg_idx[torch.randperm(len(neg_idx))[:self.num_negatives]].tolist()
+                        positive_pairs.append((anchor_idx, pos_sample, neg_sample))
+
+            if not positive_pairs:
+                continue
+
+            for anchor_idx, pos_idx, neg_indices in positive_pairs:
+                anchor_feat = feat[anchor_idx].unsqueeze(0)  # [1, C]
+                positive_feat = feat[pos_idx].unsqueeze(0)  # [1, C]
+                negative_feats = feat[neg_indices]  # [N, C]
+
+                # Similarity
+                positive_sim = torch.matmul(anchor_feat, positive_feat.t()) / self.temperature  # [1,1]
+                negative_sim = torch.matmul(anchor_feat, negative_feats.t()) / self.temperature  # [1,N]
+                logits = torch.cat([positive_sim, negative_sim], dim=-1)  # [1, 1+N]
+
+                target = torch.tensor([0], dtype=torch.long, device=device)
+                total_loss += F.cross_entropy(logits, target)
+                valid_count += 1
+
+        if valid_count == 0:
+            return torch.tensor(0.0, requires_grad=True, device=device)
+
+        return total_loss / valid_count
+
+    def compute_loss(self, original_image, generated_image, features, labels):
+        """
+        Compute combined loss: content loss + contrastive loss.
+
+        Args:
+            original_image (torch.Tensor): Original image tensor [B, C, H, W].
+            generated_image (torch.Tensor): Generated image tensor [B, C, H, W].
+            features (torch.Tensor): [1, n, 64, 64] feature map.
+            labels (torch.Tensor): [1, 1, 64, 64] label map with values 0-6.
+
+        Returns:
+            torch.Tensor: Combined loss.
+        """
+        content_loss = self.compute_content_loss(original_image, generated_image)
+        contrastive_loss = self.compute_contrastive_loss(features, labels)
+        return content_loss + contrastive_loss
+
+class MicroDiceLoss(nn.Module):
+    def __init__(self, num_classes=2, smooth=1e-5, class_weights=None):
+        super(MicroDiceLoss, self).__init__()
+        self.smooth = smooth
+        self.num_classes = num_classes
+        self.class_weights = class_weights if class_weights is not None else torch.ones(num_classes)
+
+    def forward(self, preds, targets):
+        """
+        preds: Tensor of shape (B, C, H, W)
+        targets: Tensor of shape (B, H, W)
+        """
+        if isinstance(preds, dict):
+            raise TypeError("Expected preds to be a Tensor, but got a dict.")
+
+        # 如果 targets 尺寸与 preds 不一致，进行 resize
+        if targets.shape[-2:] != preds.shape[-2:]:
+            targets = F.interpolate(targets.unsqueeze(1).float(), size=preds.shape[2:], mode='nearest').squeeze(1).long()
+
+        # 获取预测类别索引
+        preds = torch.argmax(preds, dim=1)  # (B, H, W)
+
+        # 展平
+        targets = targets.view(-1)
+        preds = preds.view(-1)
+
+        dice_scores = torch.zeros(self.num_classes, device=targets.device)
+
+        for class_id in range(self.num_classes):
+            true_class = (targets == class_id).float()
+            predicted_class = (preds == class_id).float()
+
+            if torch.sum(true_class) == 0 and torch.sum(predicted_class) == 0:
+                dice_scores[class_id] = 0
+            else:
+                TP = torch.sum(true_class * predicted_class)
+                FP = torch.sum((1 - true_class) * predicted_class)
+                FN = torch.sum(true_class * (1 - predicted_class))
+                dice_scores[class_id] = 2 * TP / (2 * TP + 0.3 * FP + 0.7 * FN + self.smooth)
+
+        weighted_dice = dice_scores * self.class_weights.to(dice_scores.device)
+        average_dice = torch.mean(weighted_dice)
+
+        return 1 - average_dice
+
+class CombinedLoss(nn.Module):
+    def __init__(self, dice_weight=1, ce_weight=1, num_classes=7):
+        super(CombinedLoss, self).__init__()
+        self.dice_loss = MicroDiceLoss(num_classes=num_classes, class_weights=None)
+        self.ce_loss = nn.CrossEntropyLoss(ignore_index=255)
+        self.dice_weight = dice_weight
+        self.ce_weight = ce_weight
+
+    def forward(self, inputs, targets):
+
+        dice = self.dice_loss(inputs, targets)
+        ce = self.ce_loss(inputs, targets)
+
+        return self.dice_weight * dice + self.ce_weight * ce
