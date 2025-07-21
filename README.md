@@ -21,7 +21,7 @@ You can download the PUMA dataset from [PUMA Dataset](https://drive.google.com/d
 #### 🔬 Task [1]: Cell Segmentation
 
 ###### Training for Cell Segmentation
- - In ldiffusion.py, you can set the `level` parameter to `cell` to train the model for tissue segmentation.
+ - In `ldiffusion.py`, you can set the `level` parameter to `cell` to train the model for cell segmentation.
  - If your GPU memory is enough, you can set the `component` parameter to `all`. It will train both the segmentor and the L-Diffusion model. The segmentor will be trained first, and then the segmentor will be trained using the L-Diffusion's weight.
  - If your GPU memory is limited, you can first set the `component` parameter to `ldiffusion` to warm up L-Diffusion, and then set the `component` parameter to `segmentor` to train the segmentor model, and set the `ldiffusion_weight` parameter to the path of the L-Diffusion model weight.
 
@@ -102,7 +102,7 @@ gt = convert_labels("../PUMA/01_training_dataset_png_ROIs_tissue/training_set_pr
 #### 🔬 Task [2]: Tissue Segmentation
 
 ###### Training for Tissue Segmentation
- - In ldiffusion.py, you can set the `level` parameter to `tissue` to train the model for tissue segmentation.
+ - In `ldiffusion.py`, you can set the `level` parameter to `tissue` to train the model for tissue segmentation.
  - If your GPU memory is enough, you can set the `component` parameter to `all`. It will train both the segmentor and the L-Diffusion model. The segmentor will be trained first, and then the segmentor will be trained using the L-Diffusion's weight.
  - If your GPU memory is limited, you can first set the `component` parameter to `ldiffusion` to warm up L-Diffusion, and then set the `component` parameter to `segmentor` to train the segmentor model, and set the `ldiffusion_weight` parameter to the path of the L-Diffusion model weight.
 
