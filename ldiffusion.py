@@ -127,7 +127,12 @@ class LDiffusionModel:
                     laplace_dist = torch.distributions.Laplace(0, scale_factor)
                     noise = laplace_dist.sample(latents.shape).to(self.device)
                     noisy_latents = latents + noise
-                    denoised_latents = unet(noisy_latents, t, text_embeddings).sample
+                    pred_noise = unet(noisy_latents, t, text_embeddings).sample
+                    denoised_latents = self.pipeline.scheduler.step(
+                        model_output=pred_noise,
+                        timestep=t,
+                        sample=noisy_latents
+                    ).prev_sample
 
                     decoded_image_rgb = F.interpolate(self.vae.decode(denoised_latents).sample, size=(64, 64), mode='bilinear', align_corners=False)
                     weights = torch.tensor([0.2989, 0.5870, 0.1140], device=decoded_image_rgb.device).view(1, 3, 1, 1)
