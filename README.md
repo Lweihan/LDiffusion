@@ -157,6 +157,8 @@ gt = convert_labels("../PUMA/01_training_dataset_png_ROIs_tissue/training_set_pr
 ...
 ```
 
+<img src="./attachment/tissue_sample_show.png" alt="Tissue Segmentation Results" style="display: block; margin: 0 auto; width: 100%; border: none; box-shadow: none;" />
+
 Batch Inference for Tissue Segmentation
 ```python
 import matplotlib.pyplot as plt
@@ -176,18 +178,12 @@ ldiffusion_image, mask = ldiffusion_model.inference(
     segmentor_weight='../LDiffusion/model/nnunetv2/nnunetv2_hist/nnUNet_results/XXX/nnUNetTrainer__nnUNetPlans__2d/fold_0',
     num_classes=7
 )
-
-image = Image.open("../PUMA/01_training_dataset_tif_ROIs/training_set_primary_roi_002.tif").convert('RGB')
-
-gt = convert_labels("../PUMA/01_training_dataset_png_ROIs_tissue/training_set_primary_roi_002.png")
-
-...
 ```
-
-<img src="./attachment/tissue_sample_show.png" alt="Tissue Segmentation Results" style="display: block; margin: 0 auto; width: 100%; border: none; box-shadow: none;" />
 
 ### ⚡ Quick Evaluation Metrics
 
 ```shell
 python -m LDiffusion.evaluate --image-dir [predicted images directory] --label-dir [ground truth images directory] --num-classes X
 ```
+
+The evaluation results will be saved in `./LDiffusion/eval/eval_report`
