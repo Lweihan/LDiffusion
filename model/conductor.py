@@ -6,10 +6,8 @@ import contextlib
 import sys
 import os
 from torchvision import models as tv_models, transforms
-from torchvision.ops import roi_align
 from PIL import Image
 from torchvision.models import convnext_tiny, ConvNeXt_Tiny_Weights
-from segment_anything import sam_model_registry  # 确保你已安装 segment-anything
 
 # CBAM模块定义
 class BasicConv(nn.Module):
@@ -234,4 +232,64 @@ class CellSegClassifier(nn.Module):
 
         return {"out": final_mask}
 
+class TissueSegWithDepthHeatmap(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+        weights = ConvNeXt_Tiny_Weights.IMAGENET1K_V1
+        backbone = convnext_tiny(weights=weights)
+        self.rgb_backbone = nn.Sequential(*list(backbone.children())[:-2])  # outputs [B,768,H/32,W/32]
 
+        self.depth_encoder = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False),  # H/2
+            nn.BatchNorm2d(64), nn.ReLU(inplace=True),
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False), # H/4
+            nn.BatchNorm2d(128), nn.ReLU(inplace=True),
+            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1, bias=False), # H/8
+            nn.BatchNorm2d(256), nn.ReLU(inplace=True),
+            nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1, bias=False), # H/16
+            nn.BatchNorm2d(512), nn.ReLU(inplace=True),
+            nn.Conv2d(512, 768, kernel_size=1, stride=1, padding=0, bias=False), # match channels
+            nn.BatchNorm2d(768), nn.ReLU(inplace=True),
+        )
+
+        self.heatmap_head = nn.Sequential(
+            nn.Conv2d(768*2, 512, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(512), nn.ReLU(inplace=True),
+            nn.Conv2d(512, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(256), nn.ReLU(inplace=True),
+            nn.Conv2d(256, num_classes, kernel_size=1)
+        )
+
+        self.cbam = CBAM(768)
+        self.aspp = ASPP(768, 256)
+
+        self.seg_decoder = nn.Sequential(
+            nn.Conv2d(256 + num_classes, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, num_classes, kernel_size=1)
+        )
+
+    def forward(self, rgb, depth):
+        rgb_feat = self.rgb_backbone(rgb)
+
+        depth_feat = self.depth_encoder(depth)
+        if depth_feat.shape[2:] != rgb_feat.shape[2:]:
+            depth_feat = F.interpolate(depth_feat, size=rgb_feat.shape[2:], mode='bilinear', align_corners=False)
+
+        fused_feat_for_hm = torch.cat([rgb_feat, depth_feat], dim=1)
+        heatmap_feat = self.heatmap_head(fused_feat_for_hm)
+        heatmap_up = F.interpolate(heatmap_feat, size=rgb.shape[2:], mode='bilinear', align_corners=False)
+
+        seg_feat = self.cbam(rgb_feat)
+        seg_feat = self.aspp(seg_feat)
+
+        seg_feat_fused = torch.cat([seg_feat, heatmap_feat], dim=1)
+
+        seg_logits = self.seg_decoder(seg_feat_fused)
+        seg_out = F.interpolate(seg_logits, size=rgb.shape[2:], mode='bilinear', align_corners=False)
+
+        return {"seg": seg_out, "heatmap": heatmap_up}

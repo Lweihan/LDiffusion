@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from datetime import datetime
 from tqdm import tqdm
-from dataloader import CustomDataset
+from dataset import CustomDataset
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Pixel latent vector construction parameters")

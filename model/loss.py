@@ -165,7 +165,7 @@ class MicroDiceLoss(nn.Module):
                 FN = torch.sum(true_class * (1 - predicted_class))
                 dice_scores[class_id] = 2 * TP / (2 * TP + 0.3 * FP + 0.7 * FN + self.smooth)
 
-        weighted_dice = dice_scores * self.class_weights.to(dice_scores.device)
+        weighted_dice = dice_scores * torch.tensor(self.class_weights, device=dice_scores.device)
         average_dice = torch.mean(weighted_dice)
 
         return 1 - average_dice
@@ -173,7 +173,7 @@ class MicroDiceLoss(nn.Module):
 class CombinedLoss(nn.Module):
     def __init__(self, dice_weight=1, ce_weight=1, num_classes=7):
         super(CombinedLoss, self).__init__()
-        self.dice_loss = MicroDiceLoss(num_classes=num_classes, class_weights=None)
+        self.dice_loss = MicroDiceLoss(num_classes=num_classes, class_weights=[1.0, 2.0, 2.0, 1.0])
         self.ce_loss = nn.CrossEntropyLoss(ignore_index=255)
         self.dice_weight = dice_weight
         self.ce_weight = ce_weight
@@ -184,3 +184,31 @@ class CombinedLoss(nn.Module):
         ce = self.ce_loss(inputs, targets)
 
         return self.dice_weight * dice + self.ce_weight * ce
+
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=1, gamma=2, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
+class KLDivLossMultiChannel(nn.Module):
+    def __init__(self, reduction='batchmean'):
+        super(KLDivLossMultiChannel, self).__init__()
+        self.reduction = reduction
+
+    def forward(self, pred_logits, target_logits):
+        pred_probs = F.log_softmax(pred_logits, dim=1)  # log p
+        target_probs = F.softmax(target_logits, dim=1)  # q
+        return F.kl_div(pred_probs, target_probs, reduction=self.reduction)

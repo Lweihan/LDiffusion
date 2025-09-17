@@ -8,6 +8,8 @@
 
 ```shell
 conda env create -f environment.yml
+cd model
+pip install -e .
 ```
 
 ### 📜 Simple Commands, Efficient Results
@@ -33,7 +35,7 @@ if __name__ == "__main__":
     args = parse_args()
     print("\033[35m" + str(vars(args)) + "\033[0m")
     trainer = LDiffusionModel(args.diffusion_path, level="cell")
-    trainer.train(args, component="all", ldiffusion_weight=None)
+    trainer.train(args, component="all", ldiffusion_weight=None, controlnet_weight=None)
 ````
 ###### GPU Limited
 
@@ -43,7 +45,7 @@ if __name__ == "__main__":
     args = parse_args()
     print("\033[35m" + str(vars(args)) + "\033[0m")
     trainer = LDiffusionModel(args.diffusion_path, level="cell")
-    trainer.train(args, component="ldiffusion", ldiffusion_weight=None)
+    trainer.train(args, component="ldiffusion", ldiffusion_weight=None, controlnet_weight=None)
 ````
 - Then, use the following code to train the segmentor model:
 ```python
@@ -51,7 +53,7 @@ if __name__ == "__main__":
     args = parse_args()
     print("\033[35m" + str(vars(args)) + "\033[0m")
     trainer = LDiffusionModel(args.diffusion_path, level="cell")
-    trainer.train(args, component="segmentor", ldiffusion_weight='your ldiffusion weight path')
+    trainer.train(args, component="segmentor", ldiffusion_weight='your ldiffusion weight path', controlnet_weight=None)
 ````
 
 ---
@@ -83,6 +85,7 @@ ldiffusion_model = LDiffusionModel(
 
 ldiffusion_image, mask = ldiffusion_model.inference(
     image_path="../PUMA/01_training_dataset_tif_ROIs/training_set_primary_roi_002.tif",
+    dtm_path=None,
     ldiffusion_weight='../LDiffusion/train_save/unet/XX_XX_XX',
     segmentor_weight='../LDiffusion/train_save/cellclassifier/XX_XX_XX',
     num_classes=11
@@ -121,6 +124,14 @@ python -m LDiffusion.ldiffusion --diffusion-path [stable_diffusion_v1.5] --image
 ```
 
 ###### Inference for Tissue Segmentation
+
+```shell
+export nnUNet_raw_data_base="/your_path_to/nnUNet/nnUNet_raw_data_base"
+export nnUNet_preprocessed="/your_path_to/nnUNet/nnUNet_preprocessed"
+export nnUNet_results="/your_path_to/nnUNet/nnUNet_results"
+```
+
+Single Image Inference for Tissue Segmentation
 ```python
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -133,8 +144,36 @@ ldiffusion_model = LDiffusionModel(
 
 ldiffusion_image, mask = ldiffusion_model.inference(
     image_path="../PUMA/01_training_dataset_tif_ROIs/training_set_primary_roi_002.tif",
+    dtm_path=None,
     ldiffusion_weight='../LDiffusion/train_save/unet/XX_XX_XX',
-    segmentor_weight='../LDiffusion/train_save/deeplabv3/XX_XX_XX',
+    segmentor_weight='../LDiffusion/model/nnunetv2/nnunetv2_hist/nnUNet_results/XXX/nnUNetTrainer__nnUNetPlans__2d/fold_0',
+    num_classes=7
+)
+
+image = Image.open("../PUMA/01_training_dataset_tif_ROIs/training_set_primary_roi_002.tif").convert('RGB')
+
+gt = convert_labels("../PUMA/01_training_dataset_png_ROIs_tissue/training_set_primary_roi_002.png")
+
+...
+```
+
+Batch Inference for Tissue Segmentation
+```python
+import matplotlib.pyplot as plt
+from PIL import Image
+from LDiffusion.ldiffusion import LDiffusionModel
+
+ldiffusion_model = LDiffusionModel(
+    diffusion_path="../stable_diffusion_v1.5",
+    level="tissue"
+)
+
+ldiffusion_image, mask = ldiffusion_model.inference(
+    image_path="../PUMA/01_training_dataset_tif_ROIs/",
+    dtm_path=None,
+    output_path="../PUMA/predicted_results/",
+    ldiffusion_weight='../LDiffusion/train_save/unet/XX_XX_XX',
+    segmentor_weight='../LDiffusion/model/nnunetv2/nnunetv2_hist/nnUNet_results/XXX/nnUNetTrainer__nnUNetPlans__2d/fold_0',
     num_classes=7
 )
 
@@ -146,3 +185,9 @@ gt = convert_labels("../PUMA/01_training_dataset_png_ROIs_tissue/training_set_pr
 ```
 
 <img src="./attachment/tissue_sample_show.png" alt="Tissue Segmentation Results" style="display: block; margin: 0 auto; width: 100%; border: none; box-shadow: none;" />
+
+### ⚡ Quick Evaluation Metrics
+
+```shell
+python -m LDiffusion.evaluate --image-dir [predicted images directory] --label-dir [ground truth images directory] --num-classes X
+```
