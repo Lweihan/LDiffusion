@@ -1,2 +1,4 @@
 sample/**
 train_save/**
+__pycache__/**
+model/__pycache__/**

@@ -32,6 +32,7 @@ dependencies:
   - xz=5.6.4=h5eee18b_1
   - zlib=1.2.13=h5eee18b_1
   - pip:
+      - -i https://mirrors.aliyun.com/pypi/simple/
       - accelerate==1.8.1
       - cellpose==4.0.6
       - certifi==2025.7.14
