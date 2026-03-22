@@ -223,12 +223,6 @@ The evaluation results will be saved in `./LDiffusion/eval/eval_report`
 [![Engine: DeepSpeed](https://img.shields.io/badge/Engine-DeepSpeed-informational)](https://www.deepspeed.ai/)
 [![Method: nnUNetv2](https://img.shields.io/badge/Method-nnUNetv2-purple)](https://github.com/MIC-DKFZ/nnUNet)
 
-If your institution requires project certificates, you can append links here:
-
-- Model governance certificate
-- Data compliance certificate
-- Clinical validation certificate
-
 Recommended citation entry:
 
 ```bibtex
