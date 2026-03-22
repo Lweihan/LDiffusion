@@ -262,16 +262,24 @@ class LDiffusionModel:
             if self._is_main_process():
                 print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {current_loss:.4f}, Elapsed Time: {elapsed_time}s")
 
-            if self._is_main_process() and current_loss < checkpoint:
-                os.makedirs(save_path, exist_ok=True)
-                # ZeRO-3 将参数分片到多卡，需用 GatheredParameters 收集后再保存
-                with deepspeed.zero.GatheredParameters(engine.module.parameters()):
-                    engine.module.unet.save_pretrained(save_path)
-                    torch.save(
-                        engine.module.proj.state_dict(),
-                        os.path.join(save_path, "proj_weights.pt")
-                    )
+            should_save = current_loss < checkpoint
+            if should_save:
+                if self._is_main_process():
+                    os.makedirs(save_path, exist_ok=True)
+
+                # ZeRO-3 参数聚合需要所有 rank 进入同一通信路径，避免在 epoch 切换处卡住
+                with deepspeed.zero.GatheredParameters(engine.module.parameters(), modifier_rank=0):
+                    if self._is_main_process():
+                        engine.module.unet.save_pretrained(save_path)
+                        torch.save(
+                            engine.module.proj.state_dict(),
+                            os.path.join(save_path, "proj_weights.pt")
+                        )
+
                 checkpoint = current_loss
+
+            if self.is_distributed:
+                deepspeed.comm.barrier()
 
             if self._is_main_process():
                 with open(csv_file, mode='a', newline='') as file:
@@ -300,7 +308,7 @@ class LDiffusionModel:
             if component == "segmentor":
                 ldiffusion_weight = ldiffusion_weight
             if segmentor.level == "tissue":
-                segmentor.train_tissue_model(args.num_epochs - 10, ldiffusion_weight, args.diffusion_path)
+                segmentor.train_tissue_model_nnUNetv2(args.num_epochs - 10, ldiffusion_weight, args.diffusion_path)
             elif segmentor.level == "cell":
                 segmentor.train_cell_model(args.num_epochs - 10, ldiffusion_weight, args.diffusion_path)
             else:
@@ -309,7 +317,7 @@ class LDiffusionModel:
     def inference(self, image_path, ldiffusion_weight, segmentor_weight, num_classes):
         segmentor = Segmentor(train_loader=None, val_loader=None, level=self.level, num_classes=num_classes)
         if self.level == "tissue":
-            return segmentor.inference_tissue_model(image_path, self.diffusion_path, ldiffusion_weight, segmentor_weight)
+            return segmentor.inference_tissue_model_nnUNetv2(image_path, self.diffusion_path, ldiffusion_weight, segmentor_weight)
         elif self.level == "cell":
             return segmentor.inference_cell_model(image_path, self.diffusion_path, ldiffusion_weight, segmentor_weight)
         else:
@@ -319,5 +327,5 @@ if __name__ == "__main__":
     args = parse_args()
     if int(os.environ.get("RANK", "0")) == 0:
         print("\033[35m" + str(vars(args)) + "\033[0m")
-    trainer = LDiffusionModel(args.diffusion_path, level="cell", local_rank=args.local_rank)
-    trainer.train(args, component="all", ldiffusion_weight='/home/disk3/lwh/image_process/evaluation/LDiffusion/train_save/unet/25_07_17')
+    trainer = LDiffusionModel(args.diffusion_path, level="tissue", local_rank=args.local_rank)
+    trainer.train(args, component="segmentor", ldiffusion_weight='/c23227/lwh/code/LDiffusion/train_save/unet/26_03_22')
